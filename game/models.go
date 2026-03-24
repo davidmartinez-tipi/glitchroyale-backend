@@ -9,7 +9,11 @@ type Question struct {
 	OptionB      string `json:"option_b"`
 	OptionC      string `json:"option_c"`
 	OptionD      string `json:"option_d"`
+	// Nota: No incluimos 'CorrectOption' aquí para que NO se envíe al cliente por error
 }
+
+// WSMessage es el sobre que envuelve todos nuestros mensajes de WebSocket
+
 type AttackInfo struct {
 	Name     string
 	Cost     int

@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+// --- ESTRUCTURAS DE DATOS ---
+
+
+type AttackPayload struct {
+	AttackerID string `json:"attacker_id"`
+	TargetID   string `json:"target_id"`
+	Type       string `json:"type"`
+}
+
+// Arsenal define los costos y daños de los ataques disponibles
+v
+// --- EL HUB ---
+
 type Hub struct {
 	Clients              map[*Client]bool
 	Broadcast            chan []byte
@@ -19,26 +32,30 @@ type Hub struct {
 	CurrentCorrectOption string
 	RoundWinners         []*Client
 	mu                   sync.Mutex
+	GameState            string // "esperando", "trivia", "ataque"
 }
 
 func NewHub(db *sql.DB) *Hub {
 	return &Hub{
-		Broadcast:  make(chan []byte),
-		Register:   make(chan *Client),
-		Unregister: make(chan *Client),
-		Clients:    make(map[*Client]bool),
-		DB:         db,
-
+		Broadcast:       make(chan []byte, 256),
+		Register:        make(chan *Client),
+		Unregister:      make(chan *Client),
+		Clients:         make(map[*Client]bool),
+		DB:              db,
 		BroadcastAttack: make(chan AttackPayload, 256),
+		GameState:       "esperando",
 	}
 }
+
+// --- LÓGICA DE TRIVIA ---
 
 func (h *Hub) SendRandomQuestion() {
 	var q Question
 	var correctOption string
 
+	// 1. Obtener pregunta aleatoria de la base de datos
 	query := `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option 
-	          FROM questions ORDER BY RANDOM() LIMIT 1`
+              FROM questions ORDER BY RANDOM() LIMIT 1`
 
 	err := h.DB.QueryRow(query).Scan(&q.ID, &q.QuestionText, &q.OptionA, &q.OptionB, &q.OptionC, &q.OptionD, &correctOption)
 	if err != nil {
@@ -49,114 +66,124 @@ func (h *Hub) SendRandomQuestion() {
 	h.mu.Lock()
 	h.CurrentCorrectOption = correctOption
 	h.RoundWinners = make([]*Client, 0)
+	h.GameState = "trivia"
 	h.mu.Unlock()
 
-	msg := WSMessage{Type: "pregunta", Data: q}
-	jsonMsg, _ := json.Marshal(msg)
-	h.Broadcast <- jsonMsg
+	// 2. Notificar la pregunta
+	msgPregunta, _ := json.Marshal(WSMessage{Type: "pregunta", Data: q})
+	h.Broadcast <- msgPregunta
 
-	fmt.Println("📢 Pregunta enviada. La respuesta correcta es oculta:", correctOption)
+	// 3. Forzar cambio de estado en los clientes
+	msgEstado, _ := json.Marshal(WSMessage{
+		Type: "estado",
+		Data: map[string]interface{}{
+			"status": "trivia",
+		},
+	})
+	h.Broadcast <- msgEstado
 
-	// 🔥 SOLUCIÓN: Le pasamos el ID de la pregunta al reloj
+	log.Printf("📢 Pregunta [%d] enviada. Respuesta correcta: %s", q.ID, correctOption)
+
+	// 4. Iniciar temporizador de la ronda
 	go h.startRoundTimer(q.ID)
 }
 
-// 🔥 SOLUCIÓN: La función ahora acepta el questionID (int)
 func (h *Hub) startRoundTimer(questionID int) {
-	time.Sleep(20 * time.Second)
+	time.Sleep(15 * time.Second) // 15 segundos para responder
 
 	h.mu.Lock()
-	fmt.Printf("⏰ ¡Tiempo para la pregunta %d! Hubo %d respuestas correctas.\n", questionID, len(h.RoundWinners))
+	fmt.Printf("⏰ Tiempo agotado para pregunta %d. Ganadores: %d\n", questionID, len(h.RoundWinners))
 
+	// Premiar a los más rápidos
 	for i, winner := range h.RoundWinners {
 		if i == 0 {
 			winner.Tokens += 2
-			fmt.Println("🏆 1er Lugar! Se le otorgan 2 tokens. Total:", winner.Tokens)
 		} else if i == 1 {
 			winner.Tokens += 1
-			fmt.Println("🥈 2do Lugar! Se le otorga 1 token. Total:", winner.Tokens)
 		}
 	}
+	h.GameState = "ataque"
 	h.mu.Unlock()
 
-	msg := WSMessage{
-		Type: "inicio_ataque",
-		Data: "¡Ataquen! Tienen 8 segundos para usar sus tokens.",
-	}
-	jsonMsg, _ := json.Marshal(msg)
-	h.Broadcast <- jsonMsg
+	// Notificar inicio de fase de ataque
+	msg, _ := json.Marshal(WSMessage{
+		Type: "estado",
+		Data: map[string]interface{}{
+			"status": "ataque",
+		},
+	})
+	h.Broadcast <- msg
 
 	go h.startAttackWindow()
 }
 
 func (h *Hub) startAttackWindow() {
-	fmt.Println("⚔️ Ventana de ataque abierta (8 segundos)...")
-	time.Sleep(8 * time.Second)
+	time.Sleep(10 * time.Second) // 10 segundos para atacar
 
-	fmt.Println("🛡️ Ventana de ataque CERRADA.")
-	msg := WSMessage{
-		Type: "fin_ronda",
-		Data: "La ronda ha terminado. Preparando siguiente pregunta...",
-	}
-	jsonMsg, _ := json.Marshal(msg)
-	h.Broadcast <- jsonMsg
+	h.mu.Lock()
+	h.GameState = "esperando"
+	h.mu.Unlock()
+
+	msg, _ := json.Marshal(WSMessage{
+		Type: "estado",
+		Data: map[string]interface{}{
+			"status": "esperando",
+		},
+	})
+	h.Broadcast <- msg
+	log.Println("🛡️ Ronda terminada. Sistema en reposo.")
 }
+
+// --- LÓGICA DE PROCESAMIENTO ---
 
 func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.Register:
 			h.Clients[client] = true
+			log.Printf("👤 Jugador conectado: %s", client.ID)
+
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
 				close(client.Send)
 			}
 
-		// 🔥 Lógica para procesar el ATAQUE
+		case message := <-h.Broadcast:
+			for client := range h.Clients {
+				select {
+				case client.Send <- message:
+				default:
+					close(client.Send)
+					delete(h.Clients, client)
+				}
+			}
+
 		case attack := <-h.BroadcastAttack:
 			for client := range h.Clients {
-				// 1. Buscamos al objetivo (Target)
-				if client.ID == attack.TargetID {
-					// 2. Aplicamos el daño/efecto
-					client.HP -= 10 // Ejemplo: daño base
-
-					// 3. Le avisamos al objetivo que fue atacado
-					msg := map[string]interface{}{
-						"type": "ataque_ejecutado",
-						"data": map[string]interface{}{
-							"attacker": attack.AttackerID,
-							"attack":   attack.Type,
-							"new_hp":   client.HP,
-						},
-					}
-					payload, _ := json.Marshal(msg)
-					client.Send <- payload
-
-					log.Printf("💥 %s recibió un %s de %s. HP restante: %d",
-						client.ID, attack.Type, attack.AttackerID, client.HP)
+				if client.ID == attack.AttackerID {
+					h.HandleAttack(client, attack.TargetID, attack.Type)
+					break
 				}
 			}
 		}
 	}
 }
+
 func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// 1. Validar si el ataque existe en nuestro arsenal
+	if h.GameState != "ataque" {
+		log.Printf("🚫 %s intentó atacar fuera de tiempo", attacker.ID)
+		return
+	}
+
 	info, exists := Arsenal[attackName]
-	if !exists {
+	if !exists || attacker.Tokens < info.Cost {
 		return
 	}
 
-	// 2. Validar si el atacante tiene tokens suficientes [cite: 19]
-	if attacker.Tokens < info.Cost {
-		log.Printf("⚠️ %s no tiene tokens suficientes", attacker.ID)
-		return
-	}
-
-	// 3. Buscar al rival (target) en la sala
 	var target *Client
 	for c := range h.Clients {
 		if c.ID == targetID {
@@ -165,13 +192,14 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 		}
 	}
 
-	// 4. Aplicar daño si el rival existe y tiene vida
 	if target != nil && target.HP > 0 {
 		attacker.Tokens -= info.Cost
 		target.HP -= info.Damage
-		log.Printf("⚔️ %s atacó a %s con %s. HP Rival: %d", attacker.ID, target.ID, attackName, target.HP)
+		if target.HP < 0 {
+			target.HP = 0
+		}
 
-		// 5. Notificar a TODOS el ataque para el efecto visual [cite: 32]
+		// Notificar a todos el evento visual
 		payload := map[string]interface{}{
 			"attacker": attacker.ID,
 			"target":   target.ID,
@@ -181,22 +209,14 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 		msg, _ := json.Marshal(WSMessage{Type: "ataque_ejecutado", Data: payload})
 		h.Broadcast <- msg
 
-		// 6. Verificar eliminación [cite: 10]
 		if target.HP <= 0 {
-			target.HP = 0
 			h.EliminatePlayer(target)
 		}
 	}
 }
 
 func (h *Hub) EliminatePlayer(c *Client) {
-	log.Printf("💀 %s ha sido eliminado", c.ID)
+	log.Printf("💀 %s eliminado", c.ID)
 	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
-	c.Send <- msg // Mensaje de Game Over personal
-}
-
-type AttackPayload struct {
-	AttackerID string `json:"attacker_id"`
-	TargetID   string `json:"target_id"`
-	Type       string `json:"type"`
+	c.Send <- msg
 }
