@@ -159,4 +159,5 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	hub.Register <- client
 	go client.writePump()
 	go client.readPump()
+	client.sendPlayerState()
 }

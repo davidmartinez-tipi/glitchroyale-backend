@@ -23,12 +23,13 @@ type Hub struct {
 
 func NewHub(db *sql.DB) *Hub {
 	return &Hub{
-		Broadcast:       make(chan []byte),
-		Register:        make(chan *Client),
-		Unregister:      make(chan *Client),
-		Clients:         make(map[*Client]bool),
-		DB:              db,
-		BroadcastAttack: make(chan AttackPayload),
+		Broadcast:  make(chan []byte),
+		Register:   make(chan *Client),
+		Unregister: make(chan *Client),
+		Clients:    make(map[*Client]bool),
+		DB:         db,
+
+		BroadcastAttack: make(chan AttackPayload, 256),
 	}
 }
 
