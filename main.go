@@ -46,6 +46,7 @@ func main() {
 	// 2. Inicializar el Hub y encenderlo en segundo plano
 	hub := game.NewHub(db)
 	go hub.Run()
+	http.HandleFunc("/api/register", game.RegisterHandler(db))
 
 	// 3. Definir Rutas en el Mux predeterminado
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

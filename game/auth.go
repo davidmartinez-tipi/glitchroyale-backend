@@ -18,6 +18,53 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func RegisterHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req RegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Datos inválidos", http.StatusBadRequest)
+			return
+		}
+
+		// 1. Cifrar la contraseña (Hash)
+		// El "Cost" de 10 es el estándar de seguridad equilibrado
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
+		if err != nil {
+			http.Error(w, "Error al procesar contraseña", http.StatusInternalServerError)
+			return
+		}
+
+		// 2. Generar un avatar automático con DiceBear (estilo Pixel Art)
+		avatarURL := fmt.Sprintf("https://api.dicebear.com/7.x/pixel-art/svg?seed=%s", req.Username)
+
+		// 3. Insertar en la Base de Datos
+		query := `INSERT INTO users (username, email, password_hash, avatar_url) 
+				  VALUES ($1, $2, $3, $4)`
+
+		_, err = db.Exec(query, req.Username, req.Email, string(hashedPassword), avatarURL)
+
+		if err != nil {
+			// Si el error es por usuario duplicado
+			fmt.Printf("❌ Error al registrar: %v\n", err)
+			http.Error(w, "El usuario o email ya existe", http.StatusConflict)
+			return
+		}
+
+		fmt.Printf("👤 Nuevo usuario registrado: %s\n", req.Username)
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Usuario creado con éxito. ¡Bienvenido al Glitch!",
+		})
+	}
+}
+
 // 1. GENERADOR (Tu código está perfecto)
 func GenerateToken(username string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
