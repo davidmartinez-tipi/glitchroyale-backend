@@ -124,3 +124,55 @@ func (h *Hub) Run() {
 		}
 	}
 }
+func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// 1. Validar si el ataque existe en nuestro arsenal 
+	info, exists := Arsenal[attackName]
+	if !exists { return }
+
+	// 2. Validar si el atacante tiene tokens suficientes [cite: 19]
+	if attacker.Tokens < info.Cost {
+		log.Printf("⚠️ %s no tiene tokens suficientes", attacker.ID)
+		return
+	}
+
+	// 3. Buscar al rival (target) en la sala
+	var target *Client
+	for c := range h.Clients {
+		if c.ID == targetID {
+			target = c
+			break
+		}
+	}
+
+	// 4. Aplicar daño si el rival existe y tiene vida 
+	if target != nil && target.HP > 0 {
+		attacker.Tokens -= info.Cost
+		target.HP -= info.Damage
+		log.Printf("⚔️ %s atacó a %s con %s. HP Rival: %d", attacker.ID, target.ID, attackName, target.HP)
+
+		// 5. Notificar a TODOS el ataque para el efecto visual [cite: 32]
+		payload := map[string]interface{}{
+			"attacker": attacker.ID,
+			"target":   target.ID,
+			"attack":   attackName,
+			"new_hp":   target.HP,
+		}
+		msg, _ := json.Marshal(WSMessage{Type: "ataque_ejecutado", Data: payload})
+		h.Broadcast <- msg
+
+		// 6. Verificar eliminación [cite: 10]
+		if target.HP <= 0 {
+			target.HP = 0
+			h.EliminatePlayer(target)
+		}
+	}
+}
+
+func (h *Hub) EliminatePlayer(c *Client) {
+	log.Printf("💀 %s ha sido eliminado", c.ID)
+	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
+	c.Send <- msg // Mensaje de Game Over personal 
+}

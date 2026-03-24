@@ -3,10 +3,10 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"glitchroyale/game"
 	"log"
 	"net/http"
-
-	"glitchroyale/game"
+	"os"
 
 	_ "github.com/lib/pq"
 )
@@ -41,7 +41,17 @@ func main() {
 		fmt.Fprintf(w, "Ronda iniciada. Pregunta enviada a los clientes.")
 	})
 
-	puerto := ":8080"
+	puerto := os.Getenv("PORT")
+	if puerto == "" {
+		puerto = "8080" // Si estamos en local, usamos 8080
+	}
+
+	fmt.Printf("🚀 Servidor corriendo en el puerto %s\n", puerto)
+
+	// Asegúrate de agregar los dos puntos ":" antes de la variable
+	if err := http.ListenAndServe(":"+puerto, nil); err != nil {
+		log.Fatalf("❌ Error: %v", err)
+	}
 	fmt.Printf("🚀 Servidor corriendo en http://localhost%s\n", puerto)
 	fmt.Println("⚔️  Sala de batalla lista esperando jugadores en ws://localhost:8080/ws")
 	fmt.Println("🎯 Para lanzar una pregunta, visita: http://localhost:8080/api/start-round")

@@ -10,6 +10,25 @@ type Question struct {
 	OptionC      string `json:"option_c"`
 	OptionD      string `json:"option_d"`
 }
+type AttackInfo struct {
+	Name     string
+	Cost     int
+	Damage   int
+	Category string
+}
+
+// Mapa global con los datos oficiales del documento de diseño
+var Arsenal = map[string]AttackInfo{
+	"Monstertify": {Name: "Monstertify", Cost: 1, Damage: 8, Category: "Rostro"}, //
+	"Blur":        {Name: "Blur", Cost: 2, Damage: 10, Category: "Interfaz"},     // [cite: 38]
+	"Blackout":    {Name: "Blackout", Cost: 5, Damage: 30, Category: "Impacto"},  // [cite: 41]
+	// Puedes agregar el resto (Clownify, Terremoto, etc.) siguiendo el mismo patrón
+}
+
+type AttackRequest struct {
+	TargetID string `json:"target_id"` // A quién atacamos
+	Type     string `json:"type"`      // Qué ataque usamos (ej. "Monstertify")
+}
 
 // WSMessage es la estructura estándar para enviar mensajes por el WebSocket
 type WSMessage struct {

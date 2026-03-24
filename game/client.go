@@ -2,8 +2,10 @@ package game
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,6 +17,7 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
+	ID     string
 	Hub    *Hub
 	Conn   *websocket.Conn
 	Send   chan []byte
@@ -94,9 +97,14 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println("Error al conectar WebSocket:", err)
 		return
 	}
-
-	client := &Client{Hub: hub, Conn: conn, Send: make(chan []byte, 256), HP: 100}
-	client.Hub.Register <- client
+	client := &Client{
+		ID:     fmt.Sprintf("Player_%d", time.Now().UnixNano()%1000),
+		Hub:    hub,
+		Conn:   conn,
+		Send:   make(chan []byte, 256),
+		HP:     100, // [cite: 11]
+		Tokens: 0,
+	}
 
 	// Iniciamos las dos tareas en paralelo
 	go client.writePump() // Enviar al cliente
