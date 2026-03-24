@@ -33,48 +33,6 @@ func GenerateToken(username string) (string, error) {
 }
 
 // Handler de Login
-func LoginHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "JSON inválido", http.StatusBadRequest)
-			return
-		}
-
-		var dbPassword, avatarURL string
-		query := `SELECT password_hash, avatar_url FROM users WHERE LOWER(username) = LOWER($1)`
-		err := db.QueryRow(query, req.Username).Scan(&dbPassword, &avatarURL)
-
-		if err != nil {
-			fmt.Printf("⚠️ Usuario [%s] no encontrado\n", req.Username)
-			http.Error(w, "Credenciales incorrectas", http.StatusUnauthorized)
-			return
-		}
-
-		// Comparar Bcrypt
-		err = bcrypt.CompareHashAndPassword([]byte(dbPassword), []byte(req.Password))
-		if err != nil {
-			fmt.Printf("🚫 Password error para [%s]\n", req.Username)
-			http.Error(w, "Credenciales incorrectas", http.StatusUnauthorized)
-			return
-		}
-
-		token, _ := GenerateToken(req.Username)
-
-		fmt.Printf("✅ [%s] ha entrado al sistema\n", req.Username)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"token":      token,
-			"username":   req.Username,
-			"avatar_url": avatarURL,
-		})
-	}
-}
 
 // Handler de Registro (Para asegurar hashes perfectos)
 func RegisterHandler(db *sql.DB) http.HandlerFunc {
