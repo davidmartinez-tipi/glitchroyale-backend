@@ -38,6 +38,6 @@ type WSMessage struct {
 
 // PlayerMessage es lo que el frontend (o Postman) nos envía al servidor
 type PlayerMessage struct {
-	Type string `json:"type"` // Puede ser "respuesta" o "ataque"
-	Data string `json:"data"` // Puede ser "A", "B", "C", "D" o "Monstertify"
+	Type string      `json:"type"`
+	Data interface{} `json:"data"` // 🔥 Cambiado de string a interface{}
 }
