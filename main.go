@@ -11,6 +11,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// Middleware para habilitar CORS en todas las rutas
 func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -25,9 +26,10 @@ func enableCORS(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func main() {
-	// 1. Conexión a la BD
-	connStr := "postgresql://postgres.chpzuingsmjdocwhlqdr:E6HnkxAR8JrdkWsR@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+	// 1. Conexión a la BD (Añadimos sslmode=require para Supabase)
+	connStr := "postgresql://postgres.chpzuingsmjdocwhlqdr:E6HnkxAR8JrdkWsR@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require"
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -40,48 +42,36 @@ func main() {
 	}
 	fmt.Println("✅ Conectado a PostgreSQL exitosamente!")
 
-	// 2. Inicializar el Hub pasándole la BD
+	// 2. Inicializar el Hub y encenderlo en segundo plano
 	hub := game.NewHub(db)
 	go hub.Run()
 
-	// 3. Rutas
+	// 3. Definir Rutas en el Mux predeterminado
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		game.ServeWs(hub, w, r)
 	})
 
-	// RUTA DE PRUEBA: Al visitar esta URL, el servidor enviará la pregunta a los WebSockets
 	http.HandleFunc("/api/start-round", func(w http.ResponseWriter, r *http.Request) {
-		// 🔥 ESTAS 3 LÍNEAS ARREGLAN EL ERROR DE LA IMAGEN:
-		w.Header().Set("Access-Control-Allow-Origin", "*") // Permite que cualquier sitio lo llame
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		// Si es una petición de tipo OPTIONS (pre-vuelo), respondemos OK
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
 		hub.SendRandomQuestion()
 		fmt.Fprintf(w, "Ronda iniciada. Pregunta enviada a los clientes.")
 	})
 
+	// 4. Configurar el puerto
 	puerto := os.Getenv("PORT")
 	if puerto == "" {
-		puerto = "8080" // Si estamos en local, usamos 8080
+		puerto = "8080"
 	}
+
+	// 5. APLICAR EL MIDDLEWARE
+	// En lugar de usar 'nil', pasamos nuestro Mux envuelto en la función enableCORS
+	routerPrincipal := enableCORS(http.DefaultServeMux)
 
 	fmt.Printf("🚀 Servidor corriendo en el puerto %s\n", puerto)
+	fmt.Printf("🎯 API: http://localhost:%s/api/start-round\n", puerto)
+	fmt.Printf("⚔️  WS: ws://localhost:%s/ws\n", puerto)
 
-	// Asegúrate de agregar los dos puntos ":" antes de la variable
-	if err := http.ListenAndServe(":"+puerto, nil); err != nil {
-		log.Fatalf("❌ Error: %v", err)
-	}
-	fmt.Printf("🚀 Servidor corriendo en http://localhost%s\n", puerto)
-	fmt.Println("⚔️  Sala de batalla lista esperando jugadores en ws://localhost:8080/ws")
-	fmt.Println("🎯 Para lanzar una pregunta, visita: http://localhost:8080/api/start-round")
-
-	if err := http.ListenAndServe(puerto, nil); err != nil {
-		log.Fatalf("❌ Error: %v", err)
+	// 6. INICIAR EL SERVIDOR (Esta línea debe ser la última)
+	if err := http.ListenAndServe(":"+puerto, routerPrincipal); err != nil {
+		log.Fatalf("❌ Error al iniciar el servidor: %v", err)
 	}
 }
