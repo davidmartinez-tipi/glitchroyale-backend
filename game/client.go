@@ -134,12 +134,18 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return jwtKey, nil
 	})
 
-	if err != nil || !token.Valid {
-		log.Println("🚫 Intento de conexión sin token válido")
+	if err != nil {
+		// 🔥 ESTA LÍNEA ES CLAVE: Veremos si es firma inválida, expirado, etc.
+		log.Printf("🚫 Error validando JWT: %v", err)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	if !token.Valid {
+		log.Println("🚫 Token no es válido")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	// 3. Si es válido, conectar con su nombre real
 	conn, _ := upgrader.Upgrade(w, r, nil)
 	client := &Client{
