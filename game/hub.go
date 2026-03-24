@@ -232,7 +232,11 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 		}
 
 		payload := map[string]interface{}{
-			"attacker": attacker.ID, "target": target.ID, "attack": attackName, "new_hp": target.HP,
+			"attacker":        attacker.ID,
+			"target":          target.ID,
+			"attack":          attackName,
+			"new_hp":          target.HP,
+			"attacker_tokens": attacker.Tokens, // 🔥 NUEVO: Le devolvemos su vuelto
 		}
 		msg, _ := json.Marshal(WSMessage{Type: "ataque_ejecutado", Data: payload})
 		h.Broadcast <- msg
