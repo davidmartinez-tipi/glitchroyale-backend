@@ -78,14 +78,26 @@ func (h *Hub) broadcastPlayersList() {
 
 // --- 4. LÓGICA DE TRIVIA ---
 func (h *Hub) SendRandomQuestion() {
+	h.mu.Lock()
+	// 🚨 EL CANDADO: Si no estamos esperando, ignoramos el clic
+	if h.GameState != "esperando" {
+		h.mu.Unlock()
+		log.Println("⚠️ Clic doble ignorado: Ya hay una ronda en curso.")
+		return
+	}
+	h.GameState = "preparando" // Bloqueamos instantáneamente
+	h.mu.Unlock()
+
 	var q Question
 	var correctOption string
-
 	query := `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option 
 			  FROM questions ORDER BY RANDOM() LIMIT 1`
 
 	err := h.DB.QueryRow(query).Scan(&q.ID, &q.QuestionText, &q.OptionA, &q.OptionB, &q.OptionC, &q.OptionD, &correctOption)
 	if err != nil {
+		h.mu.Lock()
+		h.GameState = "esperando" // Quitamos el candado si hay error de DB
+		h.mu.Unlock()
 		log.Println("❌ Error al obtener pregunta:", err)
 		return
 	}
@@ -105,7 +117,7 @@ func (h *Hub) SendRandomQuestion() {
 	})
 	h.Broadcast <- msgEstado
 
-	log.Printf("📢 Pregunta [%d] inyectada en el túnel Broadcast", q.ID)
+	log.Printf("📢 Pregunta [%d] enviada al túnel", q.ID)
 	go h.startRoundTimer(q.ID)
 }
 
@@ -208,11 +220,13 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 	defer h.mu.Unlock()
 
 	if h.GameState != "ataque" {
+		log.Printf("🚫 %s intentó atacar fuera de tiempo", attacker.ID)
 		return
 	}
 
 	info, exists := Arsenal[attackName]
 	if !exists || attacker.Tokens < info.Cost {
+		log.Printf("⚠️ %s no tiene fondos para %s", attacker.ID, attackName)
 		return
 	}
 
@@ -231,15 +245,22 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 			target.HP = 0
 		}
 
+		// 🔥 Aquí enviamos los tokens actualizados al atacante y el HP a la víctima
 		payload := map[string]interface{}{
 			"attacker":        attacker.ID,
 			"target":          target.ID,
 			"attack":          attackName,
 			"new_hp":          target.HP,
-			"attacker_tokens": attacker.Tokens, // 🔥 NUEVO: Le devolvemos su vuelto
+			"attacker_tokens": attacker.Tokens,
 		}
+
+		// Mensaje directo sin pasar por intermediarios
 		msg, _ := json.Marshal(WSMessage{Type: "ataque_ejecutado", Data: payload})
-		h.Broadcast <- msg
+		for c := range h.Clients {
+			c.Send <- msg
+		}
+
+		log.Printf("💥 %s hizo %d de daño a %s. HP de víctima: %d", attacker.ID, info.Damage, target.ID, target.HP)
 
 		if target.HP <= 0 {
 			h.EliminatePlayer(target)
