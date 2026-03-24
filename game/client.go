@@ -97,14 +97,19 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println("Error al conectar WebSocket:", err)
 		return
 	}
+
 	client := &Client{
 		ID:     fmt.Sprintf("Player_%d", time.Now().UnixNano()%1000),
 		Hub:    hub,
 		Conn:   conn,
 		Send:   make(chan []byte, 256),
-		HP:     100, // [cite: 11]
+		HP:     100,
 		Tokens: 0,
 	}
+
+	// 🔥 ESTA ES LA LÍNEA QUE FALTA:
+	// Registramos al cliente en el Hub para que aparezca en h.Clients
+	hub.Register <- client
 
 	// Iniciamos las dos tareas en paralelo
 	go client.writePump() // Enviar al cliente
