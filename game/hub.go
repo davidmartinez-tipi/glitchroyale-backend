@@ -110,12 +110,14 @@ func (h *Hub) SendRandomQuestion() {
 }
 
 func (h *Hub) startRoundTimer(questionID int) {
-	time.Sleep(15 * time.Second)
+	time.Sleep(15 * time.Second) // El tiempo que dura la pregunta
 
 	h.mu.Lock()
+	// 1. Repartimos los tokens a los ganadores
 	for i, winner := range h.RoundWinners {
 		if i == 0 {
 			winner.Tokens += 2
+			log.Printf("🏆 2 tokens para %s", winner.ID)
 		} else if i == 1 {
 			winner.Tokens += 1
 		}
@@ -123,20 +125,41 @@ func (h *Hub) startRoundTimer(questionID int) {
 	h.GameState = "ataque"
 	h.mu.Unlock()
 
-	msg, _ := json.Marshal(WSMessage{Type: "estado", Data: map[string]interface{}{"status": "ataque"}})
-	h.Broadcast <- msg
+	// 2. 🔥 LA MAGIA: Le enviamos a CADA jugador su saldo exacto y actual
+	for client := range h.Clients {
+		msg, _ := json.Marshal(WSMessage{
+			Type: "estado",
+			Data: map[string]interface{}{
+				"status": "ataque",
+				"tokens": client.Tokens, // ¡Aquí viaja el dinero a React!
+				"hp":     client.HP,
+			},
+		})
+		// Enviamos el mensaje personal al canal del cliente
+		client.Send <- msg
+	}
 
 	go h.startAttackWindow()
 }
-
 func (h *Hub) startAttackWindow() {
-	time.Sleep(10 * time.Second)
+	time.Sleep(10 * time.Second) // El tiempo que dura la fase de ataque
+
 	h.mu.Lock()
 	h.GameState = "esperando"
 	h.mu.Unlock()
 
-	msg, _ := json.Marshal(WSMessage{Type: "estado", Data: map[string]interface{}{"status": "esperando"}})
-	h.Broadcast <- msg
+	// Actualizamos a todos para que vuelvan a la pantalla de espera con su HP final
+	for client := range h.Clients {
+		msg, _ := json.Marshal(WSMessage{
+			Type: "estado",
+			Data: map[string]interface{}{
+				"status": "esperando",
+				"tokens": client.Tokens,
+				"hp":     client.HP,
+			},
+		})
+		client.Send <- msg
+	}
 }
 
 // --- 5. BUCLE PRINCIPAL (EL REPARTIDOR DE MENSAJES) ---
