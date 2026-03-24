@@ -63,30 +63,64 @@ func (c *Client) readPump() {
 			break
 		}
 
-		// Intentamos convertir el JSON del jugador a nuestra estructura de Go
 		var playerMsg PlayerMessage
 		err = json.Unmarshal(msg, &playerMsg)
 		if err != nil {
-			log.Println("⚠️ Mensaje no válido del jugador:", string(msg))
+			log.Println("⚠️ Mensaje no válido:", string(msg))
 			continue
 		}
 
-		// Si el jugador está enviando una respuesta a la trivia
+		// --- CASO 1: RESPUESTA A TRIVIA ---
 		if playerMsg.Type == "respuesta" {
-			c.Hub.mu.Lock() // Bloqueamos un microsegundo para evitar empates exactos
-
-			// Comparamos lo que envió el jugador con la respuesta correcta actual
+			c.Hub.mu.Lock()
+			// Si la respuesta es correcta y no ha respondido ya
 			if playerMsg.Data == c.Hub.CurrentCorrectOption {
-				// Si es correcto, lo guardamos en la lista de ganadores en orden de llegada
 				c.Hub.RoundWinners = append(c.Hub.RoundWinners, c)
-				log.Printf("✅ ¡Respuesta CORRECTA del jugador!")
-			} else {
-				log.Printf("❌ Respuesta INCORRECTA")
+				log.Printf("✅ %s acertó!", c.ID)
 			}
-
 			c.Hub.mu.Unlock()
 		}
+
+		// --- CASO 2: LANZAR UN ATAQUE ---
+		if playerMsg.Type == "ataque" {
+			// El data viene como un mapa/objeto: {target_id: "...", type: "..."}
+			data, ok := playerMsg.Data.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			targetID := data["target_id"].(string)
+			tipoAtaque := data["type"].(string)
+
+			// Validar si el jugador tiene tokens suficientes (ejemplo: costo 1)
+			if c.Tokens >= 1 {
+				c.Tokens -= 1 // Restamos el token
+				log.Printf("⚔️ %s ataca a %s con %s", c.ID, targetID, tipoAtaque)
+
+				// Enviamos el ataque al Hub para que lo procese y lo mande al rival
+				c.Hub.BroadcastAttack <- AttackPayload{
+					AttackerID: c.ID,
+					TargetID:   targetID,
+					Type:       tipoAtaque,
+				}
+
+				// 🔥 IMPORTANTE: Avisar al frontend que ahora tiene menos tokens
+				c.sendPlayerState()
+			}
+		}
 	}
+}
+func (c *Client) sendPlayerState() {
+	stateMsg := map[string]interface{}{
+		"type": "estado",
+		"data": map[string]interface{}{
+			"hp":     c.HP,
+			"tokens": c.Tokens, // 👈 Esto habilitará los botones en React
+			"status": "ataque", // O el estado actual del juego
+		},
+	}
+	payload, _ := json.Marshal(stateMsg)
+	c.Send <- payload
 }
 
 // ServeWs maneja la conexión inicial

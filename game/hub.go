@@ -10,12 +10,12 @@ import (
 )
 
 type Hub struct {
-	Clients    map[*Client]bool
-	Broadcast  chan []byte
-	Register   chan *Client
-	Unregister chan *Client
-	DB         *sql.DB
-
+	Clients              map[*Client]bool
+	Broadcast            chan []byte
+	Register             chan *Client
+	Unregister           chan *Client
+	DB                   *sql.DB
+	BroadcastAttack      chan AttackPayload
 	CurrentCorrectOption string
 	RoundWinners         []*Client
 	mu                   sync.Mutex
@@ -23,11 +23,12 @@ type Hub struct {
 
 func NewHub(db *sql.DB) *Hub {
 	return &Hub{
-		Broadcast:  make(chan []byte),
-		Register:   make(chan *Client),
-		Unregister: make(chan *Client),
-		Clients:    make(map[*Client]bool),
-		DB:         db,
+		Broadcast:       make(chan []byte),
+		Register:        make(chan *Client),
+		Unregister:      make(chan *Client),
+		Clients:         make(map[*Client]bool),
+		DB:              db,
+		BroadcastAttack: make(chan AttackPayload),
 	}
 }
 
@@ -105,20 +106,34 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.Register:
 			h.Clients[client] = true
-			fmt.Println("🎮 Nuevo jugador conectado a la sala de batalla.")
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
 				close(client.Send)
-				fmt.Println("❌ Jugador desconectado.")
 			}
-		case message := <-h.Broadcast:
+
+		// 🔥 Lógica para procesar el ATAQUE
+		case attack := <-h.BroadcastAttack:
 			for client := range h.Clients {
-				select {
-				case client.Send <- message:
-				default:
-					close(client.Send)
-					delete(h.Clients, client)
+				// 1. Buscamos al objetivo (Target)
+				if client.ID == attack.TargetID {
+					// 2. Aplicamos el daño/efecto
+					client.HP -= 10 // Ejemplo: daño base
+
+					// 3. Le avisamos al objetivo que fue atacado
+					msg := map[string]interface{}{
+						"type": "ataque_ejecutado",
+						"data": map[string]interface{}{
+							"attacker": attack.AttackerID,
+							"attack":   attack.Type,
+							"new_hp":   client.HP,
+						},
+					}
+					payload, _ := json.Marshal(msg)
+					client.Send <- payload
+
+					log.Printf("💥 %s recibió un %s de %s. HP restante: %d",
+						client.ID, attack.Type, attack.AttackerID, client.HP)
 				}
 			}
 		}
@@ -128,9 +143,11 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// 1. Validar si el ataque existe en nuestro arsenal 
+	// 1. Validar si el ataque existe en nuestro arsenal
 	info, exists := Arsenal[attackName]
-	if !exists { return }
+	if !exists {
+		return
+	}
 
 	// 2. Validar si el atacante tiene tokens suficientes [cite: 19]
 	if attacker.Tokens < info.Cost {
@@ -147,7 +164,7 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 		}
 	}
 
-	// 4. Aplicar daño si el rival existe y tiene vida 
+	// 4. Aplicar daño si el rival existe y tiene vida
 	if target != nil && target.HP > 0 {
 		attacker.Tokens -= info.Cost
 		target.HP -= info.Damage
@@ -174,5 +191,11 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 func (h *Hub) EliminatePlayer(c *Client) {
 	log.Printf("💀 %s ha sido eliminado", c.ID)
 	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
-	c.Send <- msg // Mensaje de Game Over personal 
+	c.Send <- msg // Mensaje de Game Over personal
+}
+
+type AttackPayload struct {
+	AttackerID string `json:"attacker_id"`
+	TargetID   string `json:"target_id"`
+	Type       string `json:"type"`
 }
