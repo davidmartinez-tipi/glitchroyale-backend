@@ -3,14 +3,26 @@ package game
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync"
 	"time"
 )
 
-// --- ESTRUCTURAS DE DATOS ---
+// --- 1. ESTRUCTURAS DE DATOS ---
 
+type Question struct {
+	ID           int    `json:"id"`
+	QuestionText string `json:"question_text"`
+	OptionA      string `json:"option_a"`
+	OptionB      string `json:"option_b"`
+	OptionC      string `json:"option_c"`
+	OptionD      string `json:"option_d"`
+}
+
+type WSMessage struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
 
 type AttackPayload struct {
 	AttackerID string `json:"attacker_id"`
@@ -18,9 +30,17 @@ type AttackPayload struct {
 	Type       string `json:"type"`
 }
 
-// Arsenal define los costos y daños de los ataques disponibles
-v
-// --- EL HUB ---
+// Arsenal define los costos y daños de los ataques
+var Arsenal = map[string]struct {
+	Cost   int
+	Damage int
+}{
+	"Monstertify": {Cost: 1, Damage: 10},
+	"Blur":        {Cost: 2, Damage: 25},
+	"Blackout":    {Cost: 5, Damage: 60},
+}
+
+// --- 2. EL HUB ---
 
 type Hub struct {
 	Clients              map[*Client]bool
@@ -32,7 +52,7 @@ type Hub struct {
 	CurrentCorrectOption string
 	RoundWinners         []*Client
 	mu                   sync.Mutex
-	GameState            string // "esperando", "trivia", "ataque"
+	GameState            string
 }
 
 func NewHub(db *sql.DB) *Hub {
@@ -47,13 +67,12 @@ func NewHub(db *sql.DB) *Hub {
 	}
 }
 
-// --- LÓGICA DE TRIVIA ---
+// --- 3. LÓGICA DE TRIVIA ---
 
 func (h *Hub) SendRandomQuestion() {
 	var q Question
 	var correctOption string
 
-	// 1. Obtener pregunta aleatoria de la base de datos
 	query := `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option 
               FROM questions ORDER BY RANDOM() LIMIT 1`
 
@@ -69,11 +88,11 @@ func (h *Hub) SendRandomQuestion() {
 	h.GameState = "trivia"
 	h.mu.Unlock()
 
-	// 2. Notificar la pregunta
+	// Notificar la pregunta
 	msgPregunta, _ := json.Marshal(WSMessage{Type: "pregunta", Data: q})
 	h.Broadcast <- msgPregunta
 
-	// 3. Forzar cambio de estado en los clientes
+	// Forzar cambio de estado
 	msgEstado, _ := json.Marshal(WSMessage{
 		Type: "estado",
 		Data: map[string]interface{}{
@@ -82,19 +101,14 @@ func (h *Hub) SendRandomQuestion() {
 	})
 	h.Broadcast <- msgEstado
 
-	log.Printf("📢 Pregunta [%d] enviada. Respuesta correcta: %s", q.ID, correctOption)
-
-	// 4. Iniciar temporizador de la ronda
+	log.Printf("📢 Pregunta [%d] enviada. Respuesta: %s", q.ID, correctOption)
 	go h.startRoundTimer(q.ID)
 }
 
 func (h *Hub) startRoundTimer(questionID int) {
-	time.Sleep(15 * time.Second) // 15 segundos para responder
+	time.Sleep(15 * time.Second)
 
 	h.mu.Lock()
-	fmt.Printf("⏰ Tiempo agotado para pregunta %d. Ganadores: %d\n", questionID, len(h.RoundWinners))
-
-	// Premiar a los más rápidos
 	for i, winner := range h.RoundWinners {
 		if i == 0 {
 			winner.Tokens += 2
@@ -105,36 +119,23 @@ func (h *Hub) startRoundTimer(questionID int) {
 	h.GameState = "ataque"
 	h.mu.Unlock()
 
-	// Notificar inicio de fase de ataque
-	msg, _ := json.Marshal(WSMessage{
-		Type: "estado",
-		Data: map[string]interface{}{
-			"status": "ataque",
-		},
-	})
+	msg, _ := json.Marshal(WSMessage{Type: "estado", Data: map[string]interface{}{"status": "ataque"}})
 	h.Broadcast <- msg
 
 	go h.startAttackWindow()
 }
 
 func (h *Hub) startAttackWindow() {
-	time.Sleep(10 * time.Second) // 10 segundos para atacar
-
+	time.Sleep(10 * time.Second)
 	h.mu.Lock()
 	h.GameState = "esperando"
 	h.mu.Unlock()
 
-	msg, _ := json.Marshal(WSMessage{
-		Type: "estado",
-		Data: map[string]interface{}{
-			"status": "esperando",
-		},
-	})
+	msg, _ := json.Marshal(WSMessage{Type: "estado", Data: map[string]interface{}{"status": "esperando"}})
 	h.Broadcast <- msg
-	log.Println("🛡️ Ronda terminada. Sistema en reposo.")
 }
 
-// --- LÓGICA DE PROCESAMIENTO ---
+// --- 4. BUCLE PRINCIPAL ---
 
 func (h *Hub) Run() {
 	for {
@@ -175,7 +176,6 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 	defer h.mu.Unlock()
 
 	if h.GameState != "ataque" {
-		log.Printf("🚫 %s intentó atacar fuera de tiempo", attacker.ID)
 		return
 	}
 
@@ -199,12 +199,8 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 			target.HP = 0
 		}
 
-		// Notificar a todos el evento visual
 		payload := map[string]interface{}{
-			"attacker": attacker.ID,
-			"target":   target.ID,
-			"attack":   attackName,
-			"new_hp":   target.HP,
+			"attacker": attacker.ID, "target": target.ID, "attack": attackName, "new_hp": target.HP,
 		}
 		msg, _ := json.Marshal(WSMessage{Type: "ataque_ejecutado", Data: payload})
 		h.Broadcast <- msg
@@ -216,7 +212,6 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 }
 
 func (h *Hub) EliminatePlayer(c *Client) {
-	log.Printf("💀 %s eliminado", c.ID)
 	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
 	c.Send <- msg
 }

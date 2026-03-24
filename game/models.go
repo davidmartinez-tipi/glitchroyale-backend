@@ -2,15 +2,6 @@ package game
 
 // Question representa los datos que enviaremos al frontend.
 // NOTA: Omitimos deliberadamente "correct_option" para evitar trampas.
-type Question struct {
-	ID           int    `json:"id"`
-	QuestionText string `json:"question_text"`
-	OptionA      string `json:"option_a"`
-	OptionB      string `json:"option_b"`
-	OptionC      string `json:"option_c"`
-	OptionD      string `json:"option_d"`
-	// Nota: No incluimos 'CorrectOption' aquí para que NO se envíe al cliente por error
-}
 
 // WSMessage es el sobre que envuelve todos nuestros mensajes de WebSocket
 
@@ -22,12 +13,6 @@ type AttackInfo struct {
 }
 
 // Mapa global con los datos oficiales del documento de diseño
-var Arsenal = map[string]AttackInfo{
-	"Monstertify": {Name: "Monstertify", Cost: 1, Damage: 8, Category: "Rostro"}, //
-	"Blur":        {Name: "Blur", Cost: 2, Damage: 10, Category: "Interfaz"},     // [cite: 38]
-	"Blackout":    {Name: "Blackout", Cost: 5, Damage: 30, Category: "Impacto"},  // [cite: 41]
-	// Puedes agregar el resto (Clownify, Terremoto, etc.) siguiendo el mismo patrón
-}
 
 type AttackRequest struct {
 	TargetID string `json:"target_id"` // A quién atacamos
@@ -35,10 +20,6 @@ type AttackRequest struct {
 }
 
 // WSMessage es la estructura estándar para enviar mensajes por el WebSocket
-type WSMessage struct {
-	Type string      `json:"type"` // Ej: "pregunta", "ataque", "resultado"
-	Data interface{} `json:"data"`
-}
 
 // PlayerMessage es lo que el frontend (o Postman) nos envía al servidor
 type PlayerMessage struct {
