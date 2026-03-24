@@ -37,6 +37,17 @@ func main() {
 
 	// RUTA DE PRUEBA: Al visitar esta URL, el servidor enviará la pregunta a los WebSockets
 	http.HandleFunc("/api/start-round", func(w http.ResponseWriter, r *http.Request) {
+		// 🔥 ESTAS 3 LÍNEAS ARREGLAN EL ERROR DE LA IMAGEN:
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Permite que cualquier sitio lo llame
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		// Si es una petición de tipo OPTIONS (pre-vuelo), respondemos OK
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		hub.SendRandomQuestion()
 		fmt.Fprintf(w, "Ronda iniciada. Pregunta enviada a los clientes.")
 	})
