@@ -9,7 +9,6 @@ import (
 )
 
 // --- 1. ESTRUCTURAS DE DATOS ---
-
 type Question struct {
 	ID           int    `json:"id"`
 	QuestionText string `json:"question_text"`
@@ -30,7 +29,6 @@ type AttackPayload struct {
 	Type       string `json:"type"`
 }
 
-// Arsenal define los costos y daños de los ataques
 var Arsenal = map[string]struct {
 	Cost   int
 	Damage int
@@ -41,7 +39,6 @@ var Arsenal = map[string]struct {
 }
 
 // --- 2. EL HUB ---
-
 type Hub struct {
 	Clients              map[*Client]bool
 	Broadcast            chan []byte
@@ -67,14 +64,25 @@ func NewHub(db *sql.DB) *Hub {
 	}
 }
 
-// --- 3. LÓGICA DE TRIVIA ---
+// --- 3. EL RADAR (MULTIJUGADOR) ---
+func (h *Hub) broadcastPlayersList() {
+	var players []string
+	for client := range h.Clients {
+		players = append(players, client.ID)
+	}
+	msg, _ := json.Marshal(WSMessage{Type: "lista_jugadores", Data: players})
 
+	// 🔥 Enviamos la lista al túnel principal para no bloquear el servidor
+	h.Broadcast <- msg
+}
+
+// --- 4. LÓGICA DE TRIVIA ---
 func (h *Hub) SendRandomQuestion() {
 	var q Question
 	var correctOption string
 
 	query := `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option 
-              FROM questions ORDER BY RANDOM() LIMIT 1`
+			  FROM questions ORDER BY RANDOM() LIMIT 1`
 
 	err := h.DB.QueryRow(query).Scan(&q.ID, &q.QuestionText, &q.OptionA, &q.OptionB, &q.OptionC, &q.OptionD, &correctOption)
 	if err != nil {
@@ -88,20 +96,16 @@ func (h *Hub) SendRandomQuestion() {
 	h.GameState = "trivia"
 	h.mu.Unlock()
 
-	// Notificar la pregunta
 	msgPregunta, _ := json.Marshal(WSMessage{Type: "pregunta", Data: q})
 	h.Broadcast <- msgPregunta
 
-	// Forzar cambio de estado
 	msgEstado, _ := json.Marshal(WSMessage{
 		Type: "estado",
-		Data: map[string]interface{}{
-			"status": "trivia",
-		},
+		Data: map[string]interface{}{"status": "trivia"},
 	})
 	h.Broadcast <- msgEstado
 
-	log.Printf("📢 Pregunta [%d] enviada. Respuesta: %s", q.ID, correctOption)
+	log.Printf("📢 Pregunta [%d] inyectada en el túnel Broadcast", q.ID)
 	go h.startRoundTimer(q.ID)
 }
 
@@ -135,22 +139,33 @@ func (h *Hub) startAttackWindow() {
 	h.Broadcast <- msg
 }
 
-// --- 4. BUCLE PRINCIPAL ---
-
+// --- 5. BUCLE PRINCIPAL (EL REPARTIDOR DE MENSAJES) ---
 func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.Register:
 			h.Clients[client] = true
-			log.Printf("👤 %s entró a la arena", client.ID)
-			h.broadcastPlayersList() // 🔥 Avisar a todos
+			log.Printf("👤 Jugador conectado: %s", client.ID)
+			h.broadcastPlayersList()
 
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
 				close(client.Send)
-				log.Printf("🔌 %s huyó de la batalla", client.ID)
-				h.broadcastPlayersList() // 🔥 Actualizar lista
+				log.Printf("🔌 Jugador desconectado: %s", client.ID)
+				h.broadcastPlayersList()
+			}
+
+		// 🔥 ESTA ES LA PIEZA CRÍTICA QUE FALTABA 🔥
+		// Sin esto, los mensajes se quedan en el servidor y nunca viajan a React
+		case message := <-h.Broadcast:
+			for client := range h.Clients {
+				select {
+				case client.Send <- message:
+				default:
+					close(client.Send)
+					delete(h.Clients, client)
+				}
 			}
 
 		case attack := <-h.BroadcastAttack:
@@ -164,6 +179,7 @@ func (h *Hub) Run() {
 	}
 }
 
+// --- 6. COMBATE ---
 func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -207,20 +223,5 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 func (h *Hub) EliminatePlayer(c *Client) {
 	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
 	c.Send <- msg
-}
-func (h *Hub) broadcastPlayersList() {
-	var players []string
-	for client := range h.Clients {
-		players = append(players, client.ID)
-	}
-
-	msg, _ := json.Marshal(WSMessage{
-		Type: "lista_jugadores",
-		Data: players,
-	})
-
-	// Enviamos la lista a todos los canales
-	for client := range h.Clients {
-		client.Send <- msg
-	}
+	h.broadcastPlayersList() // Actualizamos lista porque alguien murió
 }
