@@ -11,7 +11,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Middleware para habilitar CORS en todas las rutas
+// Middleware para habilitar CORS (Crucial para que React y Render hablen)
 func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -28,11 +28,9 @@ func enableCORS(next http.Handler) http.Handler {
 }
 
 func main() {
-	// 1. Conexión a la BD (Añadimos sslmode=require para Supabase)
+	// 1. Conexión a la BD con SSL para Supabase
 	connStr := "postgresql://postgres.chpzuingsmjdocwhlqdr:E6HnkxAR8JrdkWsR@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require"
-
 	db, err := sql.Open("postgres", connStr)
-	http.HandleFunc("/api/login", game.LoginHandler(db))
 	if err != nil {
 		log.Fatalf("❌ Error configurando BD: %v", err)
 	}
@@ -43,37 +41,44 @@ func main() {
 	}
 	fmt.Println("✅ Conectado a PostgreSQL exitosamente!")
 
-	// 2. Inicializar el Hub y encenderlo en segundo plano
+	// 2. Inicializar el Hub y el motor de juego
 	hub := game.NewHub(db)
 	go hub.Run()
-	http.HandleFunc("/api/register", game.RegisterHandler(db))
 
-	// 3. Definir Rutas en el Mux predeterminado
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	// 3. Definir Rutas de la API
+	mux := http.NewServeMux() // Usamos un Mux limpio
+
+	mux.HandleFunc("/api/login", game.LoginHandler(db))
+	mux.HandleFunc("/api/register", game.RegisterHandler(db))
+
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		game.ServeWs(hub, w, r)
 	})
 
-	http.HandleFunc("/api/start-round", func(w http.ResponseWriter, r *http.Request) {
-		hub.SendRandomQuestion()
-		fmt.Fprintf(w, "Ronda iniciada. Pregunta enviada a los clientes.")
+	// 🔥 MEJORA CRÍTICA: Inicio de ronda NO BLOQUEANTE
+	mux.HandleFunc("/api/start-round", func(w http.ResponseWriter, r *http.Request) {
+		// Lanzamos la lógica en una goroutine para que el HTTP responda 200 OK rápido
+		go func() {
+			log.Println("📢 Disparando nueva pregunta a los clientes...")
+			hub.SendRandomQuestion()
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status": "success", "message": "Ronda disparada"}`)
 	})
 
-	// 4. Configurar el puerto
+	// 4. Configurar el puerto para Render
 	puerto := os.Getenv("PORT")
 	if puerto == "" {
 		puerto = "8080"
 	}
 
-	// 5. APLICAR EL MIDDLEWARE
-	// En lugar de usar 'nil', pasamos nuestro Mux envuelto en la función enableCORS
-	routerPrincipal := enableCORS(http.DefaultServeMux)
+	// 5. Aplicar Middleware y Encender
+	routerConCORS := enableCORS(mux)
 
-	fmt.Printf("🚀 Servidor corriendo en el puerto %s\n", puerto)
-	fmt.Printf("🎯 API: http://localhost:%s/api/start-round\n", puerto)
-	fmt.Printf("⚔️  WS: ws://localhost:%s/ws\n", puerto)
+	fmt.Printf("🚀 GlitchRoyale Engine en puerto %s\n", puerto)
 
-	// 6. INICIAR EL SERVIDOR (Esta línea debe ser la última)
-	if err := http.ListenAndServe(":"+puerto, routerPrincipal); err != nil {
-		log.Fatalf("❌ Error al iniciar el servidor: %v", err)
+	if err := http.ListenAndServe(":"+puerto, routerConCORS); err != nil {
+		log.Fatalf("❌ Error fatal: %v", err)
 	}
 }
