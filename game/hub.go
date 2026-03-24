@@ -142,22 +142,15 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.Register:
 			h.Clients[client] = true
-			log.Printf("👤 Jugador conectado: %s", client.ID)
+			log.Printf("👤 %s entró a la arena", client.ID)
+			h.broadcastPlayersList() // 🔥 Avisar a todos
 
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
 				close(client.Send)
-			}
-
-		case message := <-h.Broadcast:
-			for client := range h.Clients {
-				select {
-				case client.Send <- message:
-				default:
-					close(client.Send)
-					delete(h.Clients, client)
-				}
+				log.Printf("🔌 %s huyó de la batalla", client.ID)
+				h.broadcastPlayersList() // 🔥 Actualizar lista
 			}
 
 		case attack := <-h.BroadcastAttack:
@@ -214,4 +207,20 @@ func (h *Hub) HandleAttack(attacker *Client, targetID string, attackName string)
 func (h *Hub) EliminatePlayer(c *Client) {
 	msg, _ := json.Marshal(WSMessage{Type: "eliminacion", Data: c.ID})
 	c.Send <- msg
+}
+func (h *Hub) broadcastPlayersList() {
+	var players []string
+	for client := range h.Clients {
+		players = append(players, client.ID)
+	}
+
+	msg, _ := json.Marshal(WSMessage{
+		Type: "lista_jugadores",
+		Data: players,
+	})
+
+	// Enviamos la lista a todos los canales
+	for client := range h.Clients {
+		client.Send <- msg
+	}
 }
