@@ -32,6 +32,7 @@ func main() {
 	connStr := "postgresql://postgres.chpzuingsmjdocwhlqdr:E6HnkxAR8JrdkWsR@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require"
 
 	db, err := sql.Open("postgres", connStr)
+	http.HandleFunc("/api/login", game.LoginHandler(db))
 	if err != nil {
 		log.Fatalf("❌ Error configurando BD: %v", err)
 	}

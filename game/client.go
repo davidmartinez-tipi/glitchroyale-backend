@@ -2,11 +2,10 @@ package game
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 )
 
@@ -92,26 +91,32 @@ func (c *Client) readPump() {
 
 // ServeWs maneja la conexión inicial
 func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Error al conectar WebSocket:", err)
+	// 1. Extraer el token de la URL: ws://.../ws?token=XXXX
+	tokenString := r.URL.Query().Get("token")
+
+	// 2. Validar el Token
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return jwtKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		log.Println("🚫 Intento de conexión sin token válido")
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	// 3. Si es válido, conectar con su nombre real
+	conn, _ := upgrader.Upgrade(w, r, nil)
 	client := &Client{
-		ID:     fmt.Sprintf("Player_%d", time.Now().UnixNano()%1000),
+		ID:     claims.Username, // 👈 Ahora el ID es su nombre de usuario real
 		Hub:    hub,
 		Conn:   conn,
 		Send:   make(chan []byte, 256),
 		HP:     100,
 		Tokens: 0,
 	}
-
-	// 🔥 ESTA ES LA LÍNEA QUE FALTA:
-	// Registramos al cliente en el Hub para que aparezca en h.Clients
 	hub.Register <- client
-
-	// Iniciamos las dos tareas en paralelo
-	go client.writePump() // Enviar al cliente
-	go client.readPump()  // Escuchar al cliente
+	go client.writePump()
+	go client.readPump()
 }
